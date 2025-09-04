@@ -1,4 +1,6 @@
 #!python3
+
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -6,14 +8,14 @@ from matplotlib.animation import FuncAnimation
 # -----------------------------
 # Config (tweak as needed)
 # -----------------------------
-N          = 25          # number of particles
+N          = 50          # number of particles
 RADIUS     = 0.003        # particle radius (all equal here)
 DT         = 0.005       # time step
-STEPS      = 10_000      # total simulated steps
+STEPS      = 1_000      # total simulated steps
 SEED       = 2           # RNG seed (None for random)
 SPEED_INIT = 0.5         # sets initial speed scale
 BOX_MIN, BOX_MAX = 0.0, 1.0
-ELASTIC_E  = 0.5         # coefficient of restitution (1.0 = elastic)
+ELASTIC_E  = 0.8         # coefficient of restitution (1.0 = elastic)
 
 rng = np.random.default_rng(SEED)
 
@@ -136,9 +138,18 @@ def update(frame):
     avg_ke = np.mean(ke_hist)
     txt.set_text(f"KE: {ke:.3f}  ⟨KE⟩: {avg_ke:.3f}")
     return scat, txt
+def main():
+    # parser block
+    parser = argparse.ArgumentParser(description="A brief description of the script")
+    parser.add_argument("--video", action="store_true", help="Make a video of the particles in the playground")
+    args = parser.parse_args()
 
-ani = FuncAnimation(fig, update, frames=STEPS, init_func=init,
-                    interval=20, blit=True)
+    ani = FuncAnimation(fig, update, frames=STEPS, init_func=init,
+                        interval=20, blit=True)
 
-plt.show()
+    plt.show()
+    if args.video:
+        ani.save("particles.mp4", writer="ffmpeg", fps=30, dpi=200)
 
+if __name__ == "__main__":
+    main()
