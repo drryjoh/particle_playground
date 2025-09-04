@@ -8,7 +8,7 @@ from matplotlib.animation import FuncAnimation
 # -----------------------------
 # Config (tweak as needed)
 # -----------------------------
-N           = 50           # number of particles
+N           = 100           # number of particles
 RADIUS      = 0.003        # particle radius (all equal here)
 DT          = 0.005        # time step
 STEPS       = 1_000        # total simulated steps
@@ -16,7 +16,7 @@ SEED        = 2            # RNG seed (None for random)
 SPEED_INIT  = 0.5          # sets initial speed scale
 BOX_MIN     = 0.0
 BOX_MAX     = 1.0
-ELASTIC_E   = 0.8          # coefficient of restitution (1.0 = elastic)
+ELASTIC_E   = 1.0          # coefficient of restitution (1.0 = elastic)
 SUBSTEPS    = 2            # physics substeps per frame
 
 # -----------------------------
@@ -106,6 +106,15 @@ class ParticleSystem:
         # collisions
         self._wall_collisions()
         self._pairwise_collisions()
+        
+    def add_red(self, position, velocity, mass=1.0):
+        position = np.atleast_2d(position)   # ensures shape (1,2)
+        velocity = np.atleast_2d(velocity)
+
+        self.pos = np.concatenate([self.pos, position], axis=0)
+        self.vel = np.concatenate([self.vel, velocity], axis=0)
+        self.mass = np.concatenate([self.mass, [mass]], axis=0)
+        self.n += 1
 
     def kinetic_energy(self):
         return 0.5 * np.sum(self.mass * np.sum(self.vel**2, axis=1))
@@ -143,6 +152,8 @@ def main():
     parser = argparse.ArgumentParser(description="2-D particle playground with hard-sphere collisions.")
     parser.add_argument("--video", action="store_true",
                         help="Save animation to particles.mp4 (requires ffmpeg).")
+    parser.add_argument("--add_red", action="store_true",
+                        help="Adds a fast red particle to the playgound.")
     args = parser.parse_args()
 
     # system
@@ -152,6 +163,13 @@ def main():
         seed=SEED, speed_init=SPEED_INIT
     )
 
+    if args.add_red:
+        particles.add_red((0.8,0.01), (-1,4), mass=1.0)
+        colors = np.tile([[0, 0, 1, 1]], (particles.n, 1))
+        colors[-1] = [1, 0, 0, 1]
+    else:
+        colors = np.tile([[0, 0, 1, 1]], (particles.n, 1))
+
     # figure / artists
     fig, ax = plt.subplots(figsize=(6, 6))
     ax.set_aspect('equal')
@@ -159,7 +177,8 @@ def main():
     ax.set_ylim(BOX_MIN, BOX_MAX)
     ax.set_xticks([]); ax.set_yticks([])
     scat = ax.scatter(particles.pos[:, 0], particles.pos[:, 1],
-                      s=(RADIUS * 1000) ** 2, alpha=0.8)
+                      s=(RADIUS * 1000) ** 2, alpha=0.8, c=colors)
+
     txt = ax.text(0.02, 0.98, "", transform=ax.transAxes, va="top", ha="left")
 
     # animation
