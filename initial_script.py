@@ -16,7 +16,7 @@ SEED        = 2            # RNG seed (None for random)
 SPEED_INIT  = 0.5          # sets initial speed scale
 BOX_MIN     = 0.0
 BOX_MAX     = 1.0
-ELASTIC_E   = 1.0          # coefficient of restitution (1.0 = elastic)
+ELASTIC_E   = 0.9          # coefficient of restitution (1.0 = elastic)
 SUBSTEPS    = 2            # physics substeps per frame
 
 # -----------------------------
