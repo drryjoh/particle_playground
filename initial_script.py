@@ -4,9 +4,17 @@ from functools import partial
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
+from matplotlib.patches import Rectangle
+import matplotlib.patches as patches
+
+# Import the ParticleSystem from the original script
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from initial_script import ParticleSystem
 
 # -----------------------------
-# Config (tweak as needed)
+# Config (using same values as original)
 # -----------------------------
 N           = 100           # number of particles
 RADIUS      = 0.003        # particle radius (all equal here)
@@ -16,125 +24,122 @@ SEED        = 2            # RNG seed (None for random)
 SPEED_INIT  = 0.5          # sets initial speed scale
 BOX_MIN     = 0.0
 BOX_MAX     = 1.0
-ELASTIC_E   = 0.9          # coefficient of restitution (1.0 = elastic)
+ELASTIC_E   = 0.6          # coefficient of restitution (1.0 = elastic)
 SUBSTEPS    = 2            # physics substeps per frame
 
-# -----------------------------
-# Particle system
-# -----------------------------
-class ParticleSystem:
-    def __init__(self, n, radius, dt, e, box_min=0.0, box_max=1.0,
-                 seed=None, speed_init=0.5):
-        self.n = n
-        self.radius = radius
-        self.dt = dt
-        self.e = e
-        self.box_min = box_min
-        self.box_max = box_max
+# Thermometer configuration
+THERMO_WIDTH = 0.08
+THERMO_HEIGHT = 0.6
+THERMO_X = 1.05
+THERMO_Y = 0.2
+BULB_RADIUS = 0.06
 
-        self.rng = np.random.default_rng(seed)
-
-        # state
-        self.pos = self._place_nonoverlapping()
-        theta = self.rng.uniform(0, 2*np.pi, size=n)
-        speed = speed_init * self.rng.uniform(0.7, 1.3, size=n)
-        self.vel = np.stack([speed*np.cos(theta), speed*np.sin(theta)], axis=1)
-        self.mass = self.rng.uniform(0.5, 3.0, size=n)
-
-        # diagnostics
-        self.ke_hist = []
-
-    # ----- helpers / physics -----
-    def _place_nonoverlapping(self):
-        pos = np.empty((self.n, 2))
-        for i in range(self.n):
-            for _ in range(10_000):
-                cand = self.rng.uniform(self.box_min + self.radius,
-                                        self.box_max - self.radius, size=2)
-                if i == 0:
-                    pos[i] = cand
-                    break
-                d2 = np.sum((pos[:i] - cand)**2, axis=1)
-                if np.all(d2 >= (2*self.radius)**2):
-                    pos[i] = cand
-                    break
-            else:
-                raise RuntimeError("Could not place particles without overlap.")
-        return pos
-
-    def _wall_collisions(self):
-        for d in range(2):
-            low_hit  = self.pos[:, d] < self.box_min + self.radius
-            high_hit = self.pos[:, d] > self.box_max - self.radius
-            self.vel[low_hit, d]  *= -1
-            self.vel[high_hit, d] *= -1
-            self.pos[:, d] = np.clip(self.pos[:, d],
-                                     self.box_min + self.radius,
-                                     self.box_max - self.radius)
-
-    def _pairwise_collisions(self):
-        n = self.pos.shape[0]
-        rmin = 2 * self.radius
-        rmin2 = rmin * rmin
-        for i in range(n):
-            for j in range(i+1, n):
-                rij = self.pos[i] - self.pos[j]
-                dist2 = rij @ rij
-                if dist2 < rmin2:
-                    dist = np.sqrt(dist2) if dist2 > 0 else 1e-12
-                    n_hat = rij / dist
-
-                    # resolve overlap by inverse-mass split
-                    overlap = rmin - dist
-                    if overlap > 0:
-                        inv_m_sum = (1.0 / self.mass[i] + 1.0 / self.mass[j])
-                        self.pos[i] += n_hat * (overlap * (1.0 / self.mass[i]) / inv_m_sum)
-                        self.pos[j] -= n_hat * (overlap * (1.0 / self.mass[j]) / inv_m_sum)
-
-                    # normal impulse
-                    rel_v = self.vel[i] - self.vel[j]
-                    vn = rel_v @ n_hat
-                    if vn >= 0:
-                        continue
-                    j_imp = -(1 + self.e) * vn / (1.0 / self.mass[i] + 1.0 / self.mass[j])
-                    self.vel[i] += (j_imp / self.mass[i]) * n_hat
-                    self.vel[j] -= (j_imp / self.mass[j]) * n_hat
-
-    def step(self):
-        # free flight
-        self.pos += self.vel * self.dt
-        # collisions
-        self._wall_collisions()
-        self._pairwise_collisions()
+class ThermometerVisualizer:
+    def __init__(self, ax, initial_ke, x=THERMO_X, y=THERMO_Y, 
+                 width=THERMO_WIDTH, height=THERMO_HEIGHT, bulb_radius=BULB_RADIUS):
+        self.ax = ax
+        self.initial_ke = initial_ke
+        self.max_ke = initial_ke * 1.1  # Allow for slight increase
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.bulb_radius = bulb_radius
         
-    def add_red(self, position, velocity, mass=1.0):
-        position = np.atleast_2d(position)   # ensures shape (1,2)
-        velocity = np.atleast_2d(velocity)
-
-        self.pos = np.concatenate([self.pos, position], axis=0)
-        self.vel = np.concatenate([self.vel, velocity], axis=0)
-        self.mass = np.concatenate([self.mass, [mass]], axis=0)
-        self.n += 1
-
-    def kinetic_energy(self):
-        return 0.5 * np.sum(self.mass * np.sum(self.vel**2, axis=1))
-
-    def reset_ke_history(self):
-        self.ke_hist.clear()
-        ke = self.kinetic_energy()
-        self.ke_hist.append(ke)
-        return ke
+        # Create thermometer components
+        self._create_thermometer()
+        
+    def _create_thermometer(self):
+        # Thermometer tube (outline)
+        self.tube_outline = Rectangle(
+            (self.x - self.width/2, self.y), 
+            self.width, self.height,
+            linewidth=2, edgecolor='black', facecolor='white', alpha=0.8
+        )
+        self.ax.add_patch(self.tube_outline)
+        
+        # Thermometer bulb (outline)
+        self.bulb_outline = plt.Circle(
+            (self.x, self.y - self.bulb_radius/2), 
+            self.bulb_radius,
+            linewidth=2, edgecolor='black', facecolor='white', alpha=0.8
+        )
+        self.ax.add_patch(self.bulb_outline)
+        
+        # Mercury/fluid in bulb
+        self.bulb_fluid = plt.Circle(
+            (self.x, self.y - self.bulb_radius/2), 
+            self.bulb_radius * 0.8,
+            facecolor='red', alpha=0.8
+        )
+        self.ax.add_patch(self.bulb_fluid)
+        
+        # Mercury/fluid in tube (starts full)
+        self.tube_fluid = Rectangle(
+            (self.x - self.width/2 + 0.005, self.y), 
+            self.width - 0.01, self.height,
+            facecolor='red', alpha=0.8
+        )
+        self.ax.add_patch(self.tube_fluid)
+        
+        # Temperature scale labels
+        self._add_scale_labels()
+        
+    def _add_scale_labels(self):
+        # Add temperature scale on the right side
+        scale_x = self.x + self.width/2 + 0.02
+        
+        # Hot label at top
+        self.ax.text(scale_x, self.y + self.height, 'HOT', 
+                    fontsize=10, fontweight='bold', color='red',
+                    verticalalignment='top')
+        
+        # Cold label at bottom
+        self.ax.text(scale_x, self.y, 'COLD', 
+                    fontsize=10, fontweight='bold', color='blue',
+                    verticalalignment='bottom')
+        
+        # Title
+        self.ax.text(self.x, self.y + self.height + 0.08, 'Kinetic Energy', 
+                    fontsize=12, fontweight='bold',
+                    horizontalalignment='center')
+        
+    def update(self, current_ke):
+        # Calculate the fill ratio based on kinetic energy
+        # When KE decreases, thermometer level decreases
+        if self.max_ke > 0:
+            fill_ratio = max(0, min(1, current_ke / self.max_ke))
+        else:
+            fill_ratio = 0
+            
+        # Update the tube fluid height
+        new_height = self.height * fill_ratio
+        self.tube_fluid.set_height(new_height)
+        
+        # Change color based on energy level
+        if fill_ratio > 0.7:
+            color = 'red'
+        elif fill_ratio > 0.4:
+            color = 'orange'
+        elif fill_ratio > 0.2:
+            color = 'yellow'
+        else:
+            color = 'blue'
+            
+        self.tube_fluid.set_facecolor(color)
+        self.bulb_fluid.set_facecolor(color)
 
 # -----------------------------
 # Animation callbacks
 # -----------------------------
-def init_anim(scat, txt, particles: ParticleSystem):
+def init_anim(scat, txt, thermometer, particles: ParticleSystem):
     scat.set_offsets(particles.pos)
     ke = particles.reset_ke_history()
+    thermometer.update(ke)
     txt.set_text(f"KE: {ke:.3f}  ⟨KE⟩: {ke:.3f}")
     return scat, txt
 
-def update_anim(frame, scat, txt, particles: ParticleSystem):
+def update_anim(frame, scat, txt, thermometer, particles: ParticleSystem):
     for _ in range(SUBSTEPS):
         particles.step()
     scat.set_offsets(particles.pos)
@@ -142,6 +147,10 @@ def update_anim(frame, scat, txt, particles: ParticleSystem):
     ke = particles.kinetic_energy()
     particles.ke_hist.append(ke)
     avg_ke = np.mean(particles.ke_hist)
+    
+    # Update thermometer
+    thermometer.update(ke)
+    
     txt.set_text(f"KE: {ke:.3f}  ⟨KE⟩: {avg_ke:.3f}")
     return scat, txt
 
@@ -149,11 +158,11 @@ def update_anim(frame, scat, txt, particles: ParticleSystem):
 # Main
 # -----------------------------
 def main():
-    parser = argparse.ArgumentParser(description="2-D particle playground with hard-sphere collisions.")
+    parser = argparse.ArgumentParser(description="2-D particle playground with thermometer showing kinetic energy.")
     parser.add_argument("--video", action="store_true",
-                        help="Save animation to particles.mp4 (requires ffmpeg).")
+                        help="Save animation to particles_thermo.mp4 (requires ffmpeg).")
     parser.add_argument("--add_red", action="store_true",
-                        help="Adds a fast red particle to the playgound.")
+                        help="Adds a fast red particle to the playground.")
     args = parser.parse_args()
 
     # system
@@ -170,31 +179,39 @@ def main():
     else:
         colors = np.tile([[0, 0, 1, 1]], (particles.n, 1))
 
-    # figure / artists
-    fig, ax = plt.subplots(figsize=(6, 6))
+    # figure / artists with extra space for thermometer
+    fig, ax = plt.subplots(figsize=(8, 6))
     ax.set_aspect('equal')
-    ax.set_xlim(BOX_MIN, BOX_MAX)
+    ax.set_xlim(BOX_MIN, BOX_MAX + 0.3)  # Extra space for thermometer
     ax.set_ylim(BOX_MIN, BOX_MAX)
     ax.set_xticks([]); ax.set_yticks([])
+    
+    # Particle scatter plot
     scat = ax.scatter(particles.pos[:, 0], particles.pos[:, 1],
                       s=(RADIUS * 1000) ** 2, alpha=0.8, c=colors)
 
+    # Kinetic energy text
     txt = ax.text(0.02, 0.98, "", transform=ax.transAxes, va="top", ha="left")
+    
+    # Create thermometer
+    initial_ke = particles.kinetic_energy()
+    thermometer = ThermometerVisualizer(ax, initial_ke)
 
     # animation
     ani = FuncAnimation(
         fig,
-        partial(update_anim, scat=scat, txt=txt, particles=particles),
+        partial(update_anim, scat=scat, txt=txt, thermometer=thermometer, particles=particles),
         frames=STEPS,
-        init_func=partial(init_anim, scat=scat, txt=txt, particles=particles),
+        init_func=partial(init_anim, scat=scat, txt=txt, thermometer=thermometer, particles=particles),
         interval=20,
-        blit=True
+        blit=False  # Set to False to allow thermometer updates
     )
 
+    plt.tight_layout()
     plt.show()
 
     if args.video:
-        ani.save("particles.mp4", writer="ffmpeg", fps=30, dpi=200)
+        ani.save("particles_thermo.mp4", writer="ffmpeg", fps=30, dpi=200)
 
 if __name__ == "__main__":
     main()
